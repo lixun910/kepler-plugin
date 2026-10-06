@@ -26,17 +26,25 @@ the data. A map with nothing drawable gets an honest placeholder naming what it
 does have, not an empty frame.
 
 **Colors come from the config, not from a fresh guess.** The thumbnail draws
-each dataset in the colour its own layer uses, so the card looks like the map
-behind it. Reading the colour back out of the spec is what keeps the two in
-step after a user recolours a layer and saves.
+each dataset the way its layer draws it: in the layer's own colour, and — when
+the layer colours by a field, which is what a map called "Earthquakes by
+Magnitude" is — in the colour its value falls in on the layer's colour range.
+Reading the encoding back out of the spec is what keeps the two in step after a
+user recolours a layer and saves. The *size* channel is deliberately left out:
+kepler's point radius is a metric quantity (`radiusUnits: meters` in the
+viewer's own layer props), turned into pixels by a zoom and a canvas size the
+thumbnail does not have, so any translation here would be a made-up one and
+would draw dots at a size the map never shows.
 """
 
 from __future__ import annotations
 
 import json
 import math
+from bisect import bisect_right
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any, Callable, Sequence
 
 from .data import GEOJSON_COLUMN
 from .layers import PALETTE
@@ -68,12 +76,40 @@ DrawPoint = tuple[float, float, str]
 #: `Path`, which `pathlib` already owns in this module.
 DrawPath = tuple[list[tuple[float, float]], str, bool]
 
+#: The same two before the layer's colour scale has been applied. The third slot
+#: holds the value the mark is coloured by, which is what a ramp has to measure
+#: its classes against: `None` when the layer names no colour field, or the row
+#: has nothing in that column.
+_FieldPoint = tuple[float, float, Any]
+_FieldPath = tuple[list[tuple[float, float]], Any, bool]
+
 #: Column names the plugin would have taken as coordinates, in the order it
 #: prefers them. Consulted only when a point dataset has no layer to read the
 #: names back from — a dataset loaded as `table`, or a map saved before a layer
 #: was added.
 _LAT_NAMES = ("latitude", "lat", "y")
 _LNG_NAMES = ("longitude", "lon", "lng", "long", "x")
+
+
+@dataclass(frozen=True)
+class _LayerStyle:
+    """How a layer says its dataset is drawn.
+
+    `color` is the layer's flat colour — the one kepler uses when nothing is
+    mapped to colour — and the rest is the colour channel: the column it ramps
+    and the range it ramps through, which together are what a card has to
+    reproduce for a map that is *about* one of its columns to look like itself.
+    `lat` and `lng` ride along because they come from the same layer and are
+    read in the same pass; a point layer with no coordinate columns draws
+    nothing, and the thumbnail would otherwise have to guess the names.
+    """
+
+    color: str
+    color_field: str | None = None
+    color_scale: str = "quantile"
+    color_range: tuple[str, ...] = ()
+    lat: str | None = None
+    lng: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -336,17 +372,22 @@ def _graticule(color: str) -> list[str]:
 
 
 def _geometry(record: LocalMap) -> tuple[list[DrawPoint], list[DrawPath]]:
-    """Every drawable coordinate in a map, with the colour of its layer.
+    """Every drawable coordinate in a map, in the colour its layer gives it.
 
     Returns points as `(lon, lat, color)` and paths as `(ring, color, closed)`,
     which is exactly what the SVG writer needs and nothing more. Only datasets
     inlined in the spec contribute — a Parquet-backed one has its rows in a file
     beside the map, and reading that to draw a 480-pixel thumbnail would cost
     more than the thumbnail is worth.
+
+    A dataset is drawn in two passes rather than one: the marks are gathered
+    with the field value they are coloured by, the layer's range is measured
+    against those values, and only then is each mark given its colour. The
+    colour of a mark depends on every other mark — that is what a quantile
+    scale *is* — so there is no single pass that gets it right.
     """
     spec = record.spec
-    colors = _layer_colors(spec)
-    columns = _coordinate_columns(spec)
+    styles = _layer_styles(spec)
 
     points: list[DrawPoint] = []
     paths: list[DrawPath] = []
@@ -358,47 +399,110 @@ def _geometry(record: LocalMap) -> tuple[list[DrawPoint], list[DrawPath]]:
         if not isinstance(rows, list) or not rows:
             continue
 
-        color = _rgb(colors.get(dataset.get("id")) or PALETTE[index % len(PALETTE)])
+        # A dataset with no layer of its own — loaded as a `table`, or a map
+        # made before the layer was added — still has coordinates worth drawing,
+        # and gets a colour from the palette the way an unlayered dataset always
+        # has.
+        style = styles.get(str(dataset.get("id"))) or _LayerStyle(
+            color=_rgb(PALETTE[index % len(PALETTE)])
+        )
         kind = dataset.get("kind")
 
         if kind == "geojson":
-            _collect_geojson(rows, color, points, paths)
+            found, features = _geojson_features(rows, style.color_field)
+            color = _ramp(
+                [value for _, _, value in found] + [value for _, value, _ in features],
+                style,
+            )
+            for lon, lat, value in found:
+                points.append((lon, lat, color(value)))
+            for ring, value, closed in features:
+                paths.append((ring, color(value), closed))
             continue
 
-        pair = columns.get(dataset.get("id")) or _infer_columns(rows[0])
-        if pair:
-            _collect_points(rows, pair, color, points)
+        pair = (
+            (style.lat, style.lng) if style.lat and style.lng else _infer_columns(rows[0])
+        )
+        if pair is None:
+            continue
+        sampled = _sample_points(rows, pair, style.color_field)
+        color = _ramp([value for _, _, value in sampled], style)
+        for lon, lat, value in sampled:
+            points.append((lon, lat, color(value)))
 
     return points, paths
 
 
-def _layer_colors(spec: dict[str, Any]) -> dict[str, tuple[int, int, int]]:
-    """`dataId -> rgb`, from the layers the config actually saved."""
-    colors: dict[str, tuple[int, int, int]] = {}
-    for layer in _layers(spec):
+def _layer_styles(spec: dict[str, Any]) -> dict[str, _LayerStyle]:
+    """`dataId -> _LayerStyle`, from the layers the config actually saved.
+
+    Last layer wins for a dataset that has more than one, which is what kepler
+    itself draws on top.
+    """
+    styles: dict[str, _LayerStyle] = {}
+    for index, layer in enumerate(_layers(spec)):
         config = layer.get("config") or {}
         data_id = config.get("dataId")
-        color = config.get("color")
-        if not data_id or not isinstance(color, (list, tuple)) or len(color) < 3:
+        if not data_id:
             continue
-        try:
-            colors[str(data_id)] = (int(color[0]), int(color[1]), int(color[2]))
-        except (TypeError, ValueError):
-            continue
-    return colors
+        vis = config.get("visConfig")
+        channels = layer.get("visualChannels")
+        columns = config.get("columns")
+        vis = vis if isinstance(vis, dict) else {}
+        channels = channels if isinstance(channels, dict) else {}
+        columns = columns if isinstance(columns, dict) else {}
+        styles[str(data_id)] = _LayerStyle(
+            color=_css_color(config.get("color")) or _rgb(PALETTE[index % len(PALETTE)]),
+            color_field=_name(channels.get("colorField")),
+            color_scale=str(channels.get("colorScale") or "quantile"),
+            color_range=_color_range(vis.get("colorRange")),
+            lat=_name(columns.get("lat")),
+            lng=_name(columns.get("lng")),
+        )
+    return styles
 
 
-def _coordinate_columns(spec: dict[str, Any]) -> dict[str, tuple[str, str]]:
-    """`dataId -> (lat, lng)` for the layers that name a coordinate pair."""
-    columns: dict[str, tuple[str, str]] = {}
-    for layer in _layers(spec):
-        config = layer.get("config") or {}
-        names = config.get("columns") or {}
-        lat, lng = names.get("lat"), names.get("lng")
-        data_id = config.get("dataId")
-        if data_id and lat and lng:
-            columns[str(data_id)] = (str(lat), str(lng))
-    return columns
+def _name(value: Any) -> str | None:
+    """A column name out of a config field, or None.
+
+    `visualChannels.colorField` is a bare column name in the config the plugin
+    writes and an object — `{"name": ..., "type": ...}` — in the one kepler
+    writes back the moment a map is saved from the viewer. Both are in the wild
+    here, and a map the user has opened and saved is the second, so both are
+    read.
+    """
+    if isinstance(value, dict):
+        value = value.get("name")
+    return value if isinstance(value, str) and value else None
+
+
+def _color_range(value: Any) -> tuple[str, ...]:
+    """A layer's colour range as CSS colours, or empty when there is none.
+
+    Kepler's ranges carry an explicit `colors` array whatever their category —
+    the plugin's own are written out and so are the viewer's — so the range is
+    read from there rather than resolved by name, which would need kepler's
+    registry and a version of it that agreed with the bundle. Escaped, because
+    these end up in an attribute: a `spec.json` is a file a user can edit.
+    """
+    if not isinstance(value, dict):
+        return ()
+    colors = value.get("colors")
+    if not isinstance(colors, (list, tuple)):
+        return ()
+    return tuple(
+        escape_html(color) for color in colors if isinstance(color, str) and color.strip()
+    )
+
+
+def _css_color(value: Any) -> str | None:
+    """A layer's flat colour as CSS, or None for anything that is not RGB."""
+    if not isinstance(value, (list, tuple)) or len(value) < 3:
+        return None
+    try:
+        return _rgb([int(channel) for channel in value[:3]])
+    except (TypeError, ValueError):
+        return None
 
 
 def _layers(spec: dict[str, Any]) -> list[dict[str, Any]]:
@@ -452,18 +556,20 @@ def _numeric(value: Any) -> float | None:
     return number if math.isfinite(number) else None
 
 
-def _collect_points(
-    rows: list[Any],
-    columns: tuple[str, str],
-    color: str,
-    points: list[DrawPoint],
-) -> None:
-    """Sample a point dataset into `points`, at most `MAX_DRAW_POINTS` of them."""
+def _sample_points(
+    rows: list[Any], columns: tuple[str, str], field: str | None
+) -> list[_FieldPoint]:
+    """Sample a point dataset, at most `MAX_DRAW_POINTS` of them.
+
+    Each point carries its row's value in `field` — the column the layer colours
+    by — so the ramp can be measured against what is actually drawn. `None` when
+    the layer names no field, or the row has nothing in that column.
+    """
     lat_name, lng_name = columns
     step = max(1, len(rows) // MAX_DRAW_POINTS)
-    taken = 0
+    sampled: list[_FieldPoint] = []
     for index in range(0, len(rows), step):
-        if taken >= MAX_DRAW_POINTS:
+        if len(sampled) >= MAX_DRAW_POINTS:
             break
         row = rows[index]
         if not isinstance(row, dict):
@@ -472,23 +578,25 @@ def _collect_points(
         lng = _numeric(row.get(lng_name))
         if lat is None or lng is None:
             continue
-        points.append((lng, lat, color))
-        taken += 1
+        sampled.append((lng, lat, row.get(field) if field else None))
+    return sampled
 
 
-def _collect_geojson(
-    rows: list[Any],
-    color: str,
-    points: list[DrawPoint],
-    paths: list[DrawPath],
-) -> None:
-    """Turn `_geojson` geometries into rings and points.
+def _geojson_features(
+    rows: list[Any], field: str | None
+) -> tuple[list[_FieldPoint], list[_FieldPath]]:
+    """Turn `_geojson` geometries into points and rings, with their field value.
 
     Only the outer ring of a polygon is drawn. Holes would be a second SVG path
     per feature and a fill rule to go with it, and at 480 pixels across the
     difference is not visible — the thumbnail is for recognising a map, not for
     reading it.
+
+    The row's own value in `field` travels with each ring, because a choropleth
+    is exactly this: one polygon per row, coloured by one of the row's columns.
     """
+    found: list[_FieldPoint] = []
+    features: list[_FieldPath] = []
     for row in rows:
         if not isinstance(row, dict):
             continue
@@ -500,14 +608,16 @@ def _collect_geojson(
                 continue
         if not isinstance(geometry, dict):
             continue
-        _walk_geometry(geometry, color, points, paths, depth=0)
+        value = row.get(field) if field else None
+        _walk_geometry(geometry, value, found, features, depth=0)
+    return found, features
 
 
 def _walk_geometry(
     geometry: dict[str, Any],
-    color: str,
-    points: list[DrawPoint],
-    paths: list[DrawPath],
+    value: Any,
+    points: list[_FieldPoint],
+    paths: list[_FieldPath],
     *,
     depth: int,
 ) -> None:
@@ -520,46 +630,46 @@ def _walk_geometry(
     if kind == "GeometryCollection":
         for child in geometry.get("geometries") or []:
             if isinstance(child, dict):
-                _walk_geometry(child, color, points, paths, depth=depth + 1)
+                _walk_geometry(child, value, points, paths, depth=depth + 1)
         return
 
     if kind == "Point":
         point = _pair(coordinates)
         if point:
-            points.append((point[0], point[1], color))
+            points.append((point[0], point[1], value))
         return
 
     if kind == "MultiPoint":
         for item in coordinates or []:
             point = _pair(item)
             if point:
-                points.append((point[0], point[1], color))
+                points.append((point[0], point[1], value))
         return
 
     if kind == "LineString":
         ring = _ring(coordinates)
         if len(ring) >= 2:
-            paths.append((ring, color, False))
+            paths.append((ring, value, False))
         return
 
     if kind == "MultiLineString":
         for line in coordinates or []:
             ring = _ring(line)
             if len(ring) >= 2:
-                paths.append((ring, color, False))
+                paths.append((ring, value, False))
         return
 
     if kind == "Polygon":
         ring = _ring(coordinates[0] if coordinates else None)
         if len(ring) >= 3:
-            paths.append((ring, color, True))
+            paths.append((ring, value, True))
         return
 
     if kind == "MultiPolygon":
         for polygon in coordinates or []:
             ring = _ring(polygon[0] if polygon else None)
             if len(ring) >= 3:
-                paths.append((ring, color, True))
+                paths.append((ring, value, True))
 
 
 def _pair(value: Any) -> tuple[float, float] | None:
@@ -586,6 +696,220 @@ def _ring(value: Any) -> list[tuple[float, float]]:
     if last and ring and ring[-1] != last:
         ring.append(last)
     return ring
+
+
+# ---------------------------------------------------------------------------
+# The layer's colour channel, applied to the thumbnail
+# ---------------------------------------------------------------------------
+
+
+def _ramp(values: Sequence[Any], style: _LayerStyle) -> Callable[[Any], str]:
+    """`value -> CSS colour`, the way the layer's colour channel maps it.
+
+    The layer's flat colour comes back for the three cases where there is no
+    ramp to apply and they are all the same answer: no `colorField` at all, a
+    range too short to ramp (kepler needs two colours to say anything with), or
+    no values to measure classes against. Everything else is a real ramp, and
+    which one is decided by the scale name the config saved — except for a
+    string field, where `ordinal` is the only thing kepler can do with it and is
+    used whatever the config calls it.
+    """
+    colors = style.color_range
+    flat = _constant(style.color)
+    if not style.color_field or len(colors) < 2:
+        return flat
+
+    present = [value for value in values if not _blank(value)]
+    if not present:
+        return flat
+
+    numbers = [_numeric(value) for value in present]
+    if style.color_scale == "ordinal" or any(number is None for number in numbers):
+        return _ordinal(present, colors, flat)
+    real = [number for number in numbers if number is not None]
+    if style.color_scale == "quantize":
+        return _quantize(real, colors, flat)
+    if style.color_scale == "linear":
+        return _linear(real, colors, flat)
+    return _quantile(real, colors, flat)
+
+
+def _constant(color: str) -> Callable[[Any], str]:
+    """The colour function of a dataset with nothing mapped to colour."""
+    return lambda value: color
+
+
+def _quantile(
+    numbers: list[float], colors: tuple[str, ...], fallback: Callable[[Any], str]
+) -> Callable[[Any], str]:
+    """Equal counts per class — kepler's default, and `d3.scaleQuantile`.
+
+    The class breaks sit at 1/n, 2/n … through the sorted sample, so a field
+    with three quarters of its values bunched at one end still shows the other
+    quarter instead of one flat colour. The honest choice for the skew almost
+    every real field has.
+    """
+    ordered = sorted(numbers)
+    thresholds = [
+        _quantile_at(ordered, index / len(colors)) for index in range(1, len(colors))
+    ]
+    return _from_thresholds(thresholds, colors, fallback)
+
+
+def _quantize(
+    numbers: list[float], colors: tuple[str, ...], fallback: Callable[[Any], str]
+) -> Callable[[Any], str]:
+    """Equal ranges per class — `d3.scaleQuantize`, for fixed thresholds."""
+    low, high = min(numbers), max(numbers)
+    span = high - low
+    thresholds = [
+        low + span * index / len(colors) for index in range(1, len(colors))
+    ]
+    return _from_thresholds(thresholds, colors, fallback)
+
+
+def _from_thresholds(
+    thresholds: list[float],
+    colors: tuple[str, ...],
+    fallback: Callable[[Any], str],
+) -> Callable[[Any], str]:
+    """The class a value falls in, bucketed the way d3 buckets it.
+
+    Ties go up, as `d3.scaleQuantile` puts them: a value sitting exactly on a
+    class break belongs to the class above it. On a field with many repeated
+    values that is the difference between the thumbnail and the map.
+    """
+
+    def scale(value: Any) -> str:
+        number = _numeric(value)
+        if number is None:
+            return fallback(value)
+        return colors[bisect_right(thresholds, number)]
+
+    return scale
+
+
+def _linear(
+    numbers: list[float], colors: tuple[str, ...], fallback: Callable[[Any], str]
+) -> Callable[[Any], str]:
+    """The range spread evenly across the field, blended between its colours.
+
+    A continuous ramp needs interpolating rather than bucketing, and a
+    thumbnail that stepped between five colours where the map fades through
+    them would show banding the map does not have.
+    """
+    low, high = min(numbers), max(numbers)
+    span = high - low
+    steps = len(colors) - 1
+
+    def scale(value: Any) -> str:
+        number = _numeric(value)
+        if number is None:
+            return fallback(value)
+        if span <= 0:
+            return colors[-1]
+        position = (number - low) / span * steps
+        index = min(int(position), steps - 1)
+        return _mix(colors[index], colors[index + 1], position - index)
+
+    return scale
+
+
+def _ordinal(
+    values: Sequence[Any], colors: tuple[str, ...], fallback: Callable[[Any], str]
+) -> Callable[[Any], str]:
+    """One colour per distinct value, cycled once the range runs out.
+
+    Sorted rather than in the order the rows happen to arrive, so the same data
+    draws the same way on every load: a card whose colours reshuffled between
+    two visits would read as a change to the map.
+    """
+    distinct = sorted(
+        {key for key in map(_key, values) if key is not None}, key=_order
+    )
+    lookup = {key: colors[index % len(colors)] for index, key in enumerate(distinct)}
+
+    def scale(value: Any) -> str:
+        return lookup.get(_key(value), fallback(value))
+
+    return scale
+
+
+def _quantile_at(ordered: list[float], fraction: float) -> float:
+    """`d3.quantile` — the value `fraction` of the way through a sorted sample.
+
+    Interpolated between the two order statistics that straddle the position,
+    which is where `d3.scaleQuantile` puts its class breaks. Taking
+    `ordered[int(fraction * n)]` instead gets the ends wrong on a short sample,
+    and a thumbnail of twenty points is exactly that case.
+    """
+    count = len(ordered)
+    if count == 0:
+        return 0.0
+    if fraction <= 0 or count < 2:
+        return ordered[0]
+    if fraction >= 1:
+        return ordered[-1]
+    position = (count - 1) * fraction
+    lower = math.floor(position)
+    upper = ordered[lower + 1] if lower + 1 < count else ordered[lower]
+    return ordered[lower] + (position - lower) * (upper - ordered[lower])
+
+
+def _mix(first: str, second: str, weight: float) -> str:
+    """A colour `weight` of the way from the first to the second, in RGB.
+
+    The same blend d3 does between two stops of a sequential range. Colours it
+    cannot read are not blended — the later stop is simply used, which is what
+    an unreadable stop would degrade to anyway.
+    """
+    start, end = _hex(first), _hex(second)
+    if start is None or end is None:
+        return second
+    blended = [round(a + (b - a) * weight) for a, b in zip(start, end)]
+    return _rgb(blended)
+
+
+def _hex(color: str) -> tuple[int, int, int] | None:
+    """`#rgb` or `#rrggbb` as channels, or None for anything else.
+
+    Kepler's ranges are hex — the plugin writes its own out and the viewer's
+    palette produces them — but a `spec.json` is a file the user can edit, and a
+    colour this does not understand is better dropped than blended into
+    nonsense.
+    """
+    digits = color.strip().lstrip("#")
+    if len(digits) == 3:
+        digits = "".join(digit * 2 for digit in digits)
+    if len(digits) != 6:
+        return None
+    try:
+        channels = [int(digits[index : index + 2], 16) for index in (0, 2, 4)]
+    except ValueError:
+        return None
+    return (channels[0], channels[1], channels[2])
+
+
+def _key(value: Any) -> Any:
+    """A hashable stand-in for a cell, for the ordinal lookup.
+
+    A cell that is not a scalar — a list, a dict, a value a hand-edited spec got
+    wrong — has no place on a colour scale, so it maps to None and takes the
+    layer's own colour like any other empty cell.
+    """
+    return value if isinstance(value, (str, int, float)) else None
+
+
+def _order(value: Any) -> tuple[int, Any]:
+    """Numbers before text, each in its own order, for a stable ramp."""
+    if isinstance(value, (int, float)):
+        return (0, float(value))
+    return (1, str(value))
+
+
+def _blank(value: Any) -> bool:
+    """A cell with nothing in it: absent, null, or an empty string."""
+    return value is None or (isinstance(value, str) and not value.strip())
 
 
 # ---------------------------------------------------------------------------

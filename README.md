@@ -194,7 +194,11 @@ served from the same loopback port as the maps, at the server's root, and it
 needs no account — like everything else on the local side.
 
 The thumbnail is **drawn from the map's own spec** rather than framed: the
-coordinates inlined in the spec, projected, in the colour of each layer. A live
+coordinates inlined in the spec, projected, in the colours the map itself draws
+them in — the layer's own colour, and where the layer maps a column to colour,
+the colour that value falls in on the layer's saved colour range. That is what
+makes the card for a choropleth, or for a map called "Earthquakes by Magnitude",
+look like the map behind it instead of a flat silhouette. A live
 iframe per card would be the obvious choice and the wrong one — each one loads
 the 13 MB bundle and asks for its own WebGL context, and browsers stop handing
 those out somewhere around sixteen, so a grid of twenty maps would half-render

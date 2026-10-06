@@ -54,9 +54,11 @@ at the server's root, and it needs no account.
 
 Each card carries the title, the description, the datasets and layers, when the
 map was last edited, and a thumbnail. **The thumbnail is drawn from the map's own
-spec** — the coordinates inlined in it, in the colour of each layer — not a live
-frame of the map: twenty iframes would each want a WebGL context, and browsers
-run out at around sixteen. A map whose data is held in `data/*.parquet`, or an
+spec** — the coordinates inlined in it, in the colours the map draws them in: the
+layer's colour, or, where the layer maps a column to colour, the colour that
+value falls in on the layer's colour range. It is not a live frame of the map:
+twenty iframes would each want a WebGL context, and browsers run out at around
+sixteen. A map whose data is held in `data/*.parquet`, or an
 H3 or `table` dataset, has no coordinates in the spec to draw from and gets a
 labelled placeholder instead, saying which it is. That is not an error; it is the
 one case the thumbnail cannot cover.

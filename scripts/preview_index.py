@@ -4,9 +4,10 @@
 The index page is generated per request and normally lives behind whatever maps
 the user happens to have made, which makes it awkward to work on: an empty
 `~/kepler-maps` shows the empty state and nothing else. This builds a handful of
-maps covering the branches the page has to draw — points, polygons, a
-Parquet-backed dataset with no coordinates in the spec, a map with a
-description — in a temporary directory, and serves the index against it.
+maps covering the branches the page has to draw — points, polygons, a layer that
+colours by one of its columns, a Parquet-backed dataset with no coordinates in
+the spec, a map with a description — in a temporary directory, and serves the
+index against it.
 
     .venv/bin/python scripts/preview_index.py [--port 8933] [--keep]
 
@@ -121,17 +122,24 @@ def main() -> int:
     app = KeplerApp(settings)
 
     samples = (
-        ("Western cities", ["cities"], "Population across the west."),
-        ("Bay Area parks", ["parks"], ""),
-        ("Cities and parks", ["cities", "parks"], "Two datasets, two layers."),
-        ("H3 readings", ["big"], "Too big to inline — Parquet-backed."),
-        ("Warehouse inventory", ["bare"], "No geometry, so no layer."),
+        ("Western cities", ["cities"], "Population across the west.", {}),
+        (
+            "Cities by population",
+            ["cities"],
+            "Coloured by the population column.",
+            {"*": {"color_field": "population"}},
+        ),
+        ("Bay Area parks", ["parks"], "", {}),
+        ("Cities and parks", ["cities", "parks"], "Two datasets, two layers.", {}),
+        ("H3 readings", ["big"], "Too big to inline — Parquet-backed.", {}),
+        ("Warehouse inventory", ["bare"], "No geometry, so no layer.", {}),
     )
-    for title, names, description in samples:
+    for title, names, description, options in samples:
         report = app.create_map(
             [str(fixtures[name]) for name in names],
             title=title,
             description=description,
+            options=options,
         )
         # Flushed, because the URL below is the whole point of running this and
         # a piped stdout would otherwise hold it until the process exits.
