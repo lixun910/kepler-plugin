@@ -1,6 +1,6 @@
 {
   "name": "kepler.gl",
-  "version": "0.1.0+codex.d9d6a34ffe7f",
+  "version": "0.1.0+codex.13e31ed2eddb",
   "description": "Build kepler.gl maps from a CSV, Parquet, GeoJSON or shapefile, render them as local pages you can edit and save, and — when you sign in — upload them to a server that keeps the map config and the data as Parquet.",
   "author": {
     "name": "kepler.gl"

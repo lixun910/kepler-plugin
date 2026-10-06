@@ -279,6 +279,24 @@ def main() -> int:
         "a second map with the same title gets a suffix rather than overwriting",
     )
 
+    # A layer that maps a column to colour: the index has to draw it in the
+    # range's colours rather than the layer's flat one, which is the whole
+    # difference between a card that looks like the map and a card that looks
+    # like a silhouette.
+    app.create_map(
+        str(fixtures["cities"]),
+        title="Graded Cities",
+        options={"*": {"color_field": "population"}},
+    )
+    graded_spec = json.loads((maps_dir / "graded-cities" / "spec.json").read_text())
+    graded_layer = graded_spec["config"]["config"]["visState"]["layers"][0]
+    graded_range = graded_layer["config"]["visConfig"]["colorRange"]["colors"]
+    check(
+        len(graded_range) >= 2,
+        "the graded map's layer carries a colour range to draw",
+        str(graded_range),
+    )
+
     # -- listing -----------------------------------------------------------
     section("listing")
     listing = app.list_maps()
@@ -456,6 +474,15 @@ def main() -> int:
         # either is a card with an empty frame.
         check("<circle" in index.text, "an inlined point dataset is drawn")
         check("<polygon" in index.text, "an inlined polygon dataset is drawn")
+        # A layer that colours by a field has to draw *in that field's colours*.
+        # Drawing every mark in the layer's flat colour is the failure that
+        # looks like a working page: the card is a card, and the map it stands
+        # for is not on it.
+        check(
+            all(color in index.text for color in graded_range),
+            "a layer coloured by a field draws in its colour range, not its flat colour",
+            str(graded_range),
+        )
         # `big-map` is Parquet-backed, so its rows are not in the spec and there
         # is nothing to draw; the card must say so rather than draw nothing.
         check(
@@ -475,11 +502,113 @@ def main() -> int:
 
     # A brand new maps directory has no cards to draw, and the page has to say
     # so rather than render an empty grid.
-    from kepler_mcp.gallery import render_index  # noqa: E402
+    from kepler_mcp.gallery import preview_svg, render_index  # noqa: E402
+    from kepler_mcp.store import LocalMap  # noqa: E402
 
     check(
         "No maps yet" in render_index([], root=maps_dir),
         "an empty maps directory gets an empty state, not an empty grid",
+    )
+
+    # -- what a layer's colour channel looks like --------------------------
+    section("the thumbnail's colour channel")
+
+    def thumbnail(datasets: list[dict], layers: list[dict]) -> str:
+        """A thumbnail of a hand-written spec, with no directory behind it."""
+        spec = {
+            "datasets": datasets,
+            "config": {"config": {"visState": {"layers": layers}}},
+        }
+        return preview_svg(LocalMap(slug="drawn", directory=maps_dir / "drawn", spec=spec))
+
+    def point_layer(channel: dict | str | None, range_colors: list[str]) -> dict:
+        return {
+            "id": "quakes-point",
+            "type": "point",
+            "config": {
+                "dataId": "quakes",
+                "color": [231, 159, 213],
+                "columns": {"lat": "Latitude", "lng": "Longitude"},
+                "visConfig": {"colorRange": {"colors": range_colors}},
+            },
+            "visualChannels": {"colorField": channel, "colorScale": "quantile"},
+        }
+
+    quakes = [
+        {"Latitude": 37.0 + n * 0.01, "Longitude": -122.0, "Magnitude": float(n)}
+        for n in range(1, 11)
+    ]
+    quake_rows = [{"id": "quakes", "kind": "point", "rows": quakes}]
+    ramp = ["#111111", "#222222", "#333333"]
+
+    # The plugin writes `colorField` as a bare column name; kepler writes the
+    # same channel back as `{"name": ..., "type": ...}` the moment a map is
+    # saved from the viewer. A map the user has opened and saved is the second,
+    # so a thumbnail that only read the first would go flat on exactly the maps
+    # that have been looked at.
+    for label, channel in (
+        ("a column name", "Magnitude"),
+        ("kepler's {name, type} object", {"name": "Magnitude", "type": "real"}),
+    ):
+        svg = thumbnail(quake_rows, [point_layer(channel, ramp)])
+        check(
+            all(color in svg for color in ramp),
+            f"a colour field written as {label} is ramped",
+            svg[:200],
+        )
+
+    # A column with nothing in it, or none named at all, is the layer's own
+    # colour — not an empty card, and not a colour picked out of the range.
+    flat = thumbnail(quake_rows, [point_layer(None, ramp)])
+    check(
+        "rgb(231,159,213)" in flat and "#111111" not in flat,
+        "a layer with no colour field keeps its flat colour",
+    )
+    empty_value = {"Latitude": 37.0, "Longitude": -122.0, "Magnitude": None}
+    blank = thumbnail(
+        [{"id": "quakes", "kind": "point", "rows": [empty_value]}],
+        [point_layer("Magnitude", ramp)],
+    )
+    check(
+        "rgb(231,159,213)" in blank,
+        "a colour field whose values are all empty falls back to the flat colour",
+    )
+
+    # A choropleth is a GeoJSON layer with a colour field: the value travels
+    # with the polygon, which is a different path through `_geometry` from a
+    # point dataset's.
+    def box(n: float) -> str:
+        return json.dumps(
+            {
+                "type": "Polygon",
+                "coordinates": [[[n, 37.0], [n + 0.05, 37.0], [n + 0.05, 37.05], [n, 37.0]]],
+            }
+        )
+
+    counties = [{"_geojson": box(n * 0.1), "rate": float(n)} for n in range(1, 7)]
+    choropleth = [
+        {
+            "id": "counties-geojson",
+            "type": "geojson",
+            "config": {
+                "dataId": "counties",
+                "color": [231, 159, 213],
+                "columns": {"geojson": "_geojson"},
+                "visConfig": {"colorRange": {"colors": ramp}},
+            },
+            "visualChannels": {"colorField": "rate", "colorScale": "quantile"},
+        }
+    ]
+    svg = thumbnail([{"id": "counties", "kind": "geojson", "rows": counties}], choropleth)
+    check(
+        all(color in svg for color in ramp),
+        "a choropleth's polygons are ramped by the field, not filled flat",
+        svg[:200],
+    )
+    check(
+        svg.count("<polygon") == len(counties),
+        "one polygon per feature",
+        str(svg.count("<polygon")),
     )
 
     # -- reopening ---------------------------------------------------------
