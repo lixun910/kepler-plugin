@@ -627,16 +627,53 @@ def main() -> int:
             if p.is_file()
         ),
         "the carried skill is identical to the canonical one — run "
-        "scripts/sync_codex_plugin.py after editing either",
+        "scripts/sync_plugin.py after editing either",
     )
 
-    # The version has to move when the content does, or Codex reinstalls and
-    # keeps running the copy it already had.
-    manifest = json.loads((plugin / ".codex-plugin" / "plugin.json").read_text())
+    # The version has to move when the content does, or the client reinstalls
+    # and keeps running the copy it already had. Both manifests are keyed this
+    # way, and `scripts/sync_plugin.py` is the only writer of either.
+    codex = json.loads((plugin / ".codex-plugin" / "plugin.json").read_text())
+    claude = json.loads((ROOT / ".claude-plugin" / "plugin.json").read_text())
     check(
-        "+codex." in manifest.get("version", ""),
+        "+codex." in codex.get("version", ""),
         "the Codex manifest carries a content-derived cachebuster",
-        manifest.get("version", ""),
+        codex.get("version", ""),
+    )
+    check(
+        "+claude." in claude.get("version", ""),
+        "the Claude Code manifest carries one too",
+        claude.get("version", ""),
+    )
+    # Two manifests naming different releases of the same plugin is a state
+    # nothing would report, and one of the two clients would be wrong.
+    check(
+        codex.get("version", "").split("+", 1)[0]
+        == claude.get("version", "").split("+", 1)[0],
+        "both manifests agree on the release the cachebuster hangs off",
+        f"{codex.get('version')} vs {claude.get('version')}",
+    )
+
+    # The hash has to cover what the client actually reads from its cache. For
+    # Claude that is the repo root — `marketplace.json` points the plugin at
+    # `./` — so a skill or subagent edit must move the version even when
+    # `plugins/kepler.gl` is untouched. Asserted against the script's own
+    # function rather than by editing a file, which is what makes it cheap.
+    sys.path.insert(0, str(ROOT / "scripts"))
+    from sync_plugin import CLAUDE_ROOTS, content_hash  # noqa: E402
+
+    hashed = {root.as_posix() for root in CLAUDE_ROOTS}
+    check(
+        {"skills", "agents"} <= hashed,
+        "the Claude hash covers the skill and the subagent, not just the plugin",
+        str(sorted(hashed)),
+    )
+    # Dropping a root has to change the digest, which is what proves the root
+    # contributes content rather than merely appearing in the tuple.
+    without_agents = tuple(r for r in CLAUDE_ROOTS if r.as_posix() != "agents")
+    check(
+        content_hash(ROOT, CLAUDE_ROOTS) != content_hash(ROOT, without_agents),
+        "dropping the subagent from the roots changes the hash — so it is covered",
     )
 
     # -- settings ----------------------------------------------------------

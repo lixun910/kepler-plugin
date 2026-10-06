@@ -42,7 +42,7 @@ if [ ! -x "$here/.venv/bin/kepler-gl-mcp" ]; then
     exit 1
 fi
 
-python3 "$here/scripts/sync_codex_plugin.py"
+python3 "$here/scripts/sync_plugin.py"
 
 # How the launcher finds the virtualenv from inside Codex's cached copy. The
 # file holds a path, not a credential, and the launcher treats a missing one as

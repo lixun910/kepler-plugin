@@ -101,6 +101,14 @@ machine, because the server runs from here either way:
 claude plugin marketplace add lixun910/kepler-plugin
 ```
 
+Claude Code keys the install on the plugin's **version**, so
+`scripts/sync_plugin.py` — which the installer runs — puts a hash of the plugin's
+content in the version's build metadata. Without it, `claude plugin update`
+answers "already at the latest version" at a copy that has since changed, which
+is the same trap the Codex cachebuster exists for. `scripts/sync_plugin.py` is
+the only writer of either manifest's version, so the two cannot name different
+releases of the same plugin.
+
 ### Codex
 
 Codex runs a plugin from a copy it makes under
@@ -113,8 +121,10 @@ scripts/install_codex_plugin.sh
 ```
 
 That syncs the skill copy, moves the version, records the checkout, and runs the
-two `codex plugin` commands. `scripts/sync_codex_plugin.py` on its own does the
-first two, which is what to run after editing anything under `skills/kepler-gl/`.
+two `codex plugin` commands. `scripts/sync_plugin.py` on its own does the skill
+copy and moves both versions, which is what to run after editing anything under
+`skills/kepler-gl/` — or under `agents/`, which Claude Code reads from the repo
+root the same way.
 `codex/config.toml.example` shows the equivalent configured by hand.
 
 ## Signing in

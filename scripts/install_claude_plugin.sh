@@ -46,6 +46,11 @@ fi
 # absence installs cleanly and shows up as a blank map.
 "$here/scripts/record_plugin_root.sh"
 
+# Moves the version onto a hash of the plugin's content, so Claude Code re-reads
+# the tree rather than answering "already at the latest version" at the copy it
+# already had. A no-op when nothing changed.
+python3 "$here/scripts/sync_plugin.py"
+
 echo "marketplace: $here"
 "$claude" plugin marketplace add "$here" < /dev/null
 "$claude" plugin install kepler.gl@kepler-gl < /dev/null
