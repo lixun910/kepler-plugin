@@ -47,12 +47,26 @@ sees the same tools through the plugin it installs.
 
 ## Install
 
-The plugin's Python package and its viewer bundle have to exist before a client
-can start the MCP server.
+Two things have to exist on the machine before either client can start the MCP
+server, and neither of them travels in the plugin.
 
 ```bash
 uv venv && uv pip install -e .
 ```
+
+```bash
+scripts/record_plugin_root.sh
+```
+
+The first builds the Python package into a virtualenv beside the checkout. The
+second records *where that checkout is*, and it is not optional: a client runs a
+plugin from a copy it makes under `~/.claude/plugins/cache/` or
+`~/.codex/plugins/cache/`, that copy never carries the virtualenv — it is
+gitignored and built per machine — and walking up from the cache reaches `$HOME`
+and stops. The checkout is a sibling of `$HOME`, not an ancestor, so the
+recorded path is the only thing the launcher's search can actually find. Skip it
+and everything looks installed while every tool call fails with "no interpreter
+found". Re-run it after moving the checkout.
 
 The viewer bundle is committed at `plugins/kepler.gl/vendor/kepler-viewer.js`, so
 nothing else is needed to render a map. Rebuild it only after changing
@@ -64,7 +78,13 @@ cd viewer && npm install && npm run build
 
 ### Claude Code
 
-The repo is its own marketplace. From the repo root:
+```bash
+scripts/install_claude_plugin.sh
+```
+
+That records the checkout and installs the plugin from this repo. By hand, from
+the repo root, it is the two `claude plugin` commands below — but the recording
+above is still what makes them work:
 
 ```bash
 claude plugin marketplace add .
@@ -72,6 +92,13 @@ claude plugin marketplace add .
 
 ```bash
 claude plugin install kepler.gl@kepler-gl
+```
+
+The published copy installs the same way and still needs a checkout on this
+machine, because the server runs from here either way:
+
+```bash
+claude plugin marketplace add lixun910/kepler-plugin
 ```
 
 ### Codex
@@ -85,12 +112,9 @@ changed plugin under an unchanged version and Codex keeps running the old copy.
 scripts/install_codex_plugin.sh
 ```
 
-That syncs the skill copy, moves the version, and runs the two `codex plugin`
-commands. `scripts/sync_codex_plugin.py` on its own does the first two, which is
-what to run after editing anything under `skills/kepler-gl/`.
-
-Codex also needs to be told where the checkout is, which
-`scripts/record_plugin_root.sh` records in `~/.config/kepler-gl/plugin-root`.
+That syncs the skill copy, moves the version, records the checkout, and runs the
+two `codex plugin` commands. `scripts/sync_codex_plugin.py` on its own does the
+first two, which is what to run after editing anything under `skills/kepler-gl/`.
 `codex/config.toml.example` shows the equivalent configured by hand.
 
 ## Signing in

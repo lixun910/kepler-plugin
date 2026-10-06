@@ -565,6 +565,22 @@ def main() -> int:
         "the bundle carries its version stamp",
     )
 
+    # Each client is installed by a script that records the checkout and then
+    # runs that client's own install command. Both have to be executable, or the
+    # command the README gives is one nobody can run — and the recording is the
+    # step whose absence installs cleanly and fails at the first tool call.
+    for name in (
+        "install_claude_plugin.sh",
+        "install_codex_plugin.sh",
+        "record_plugin_root.sh",
+    ):
+        script = ROOT / "scripts" / name
+        check(
+            script.is_file() and os.access(script, os.X_OK),
+            f"scripts/{name} is present and executable",
+            str(script),
+        )
+
     # Both clients read a JSON manifest, and a malformed one is a plugin that
     # installs and then does nothing — there is no error to read.
     for relative in (
