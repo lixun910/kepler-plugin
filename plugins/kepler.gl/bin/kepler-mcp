@@ -1,0 +1,78 @@
+#!/bin/sh
+# Start the kepler.gl MCP server over stdio, from wherever the plugin is.
+#
+# Both clients run a plugin's MCP server out of a *cached copy* of the plugin —
+# Codex at ~/.codex/plugins/cache/<marketplace>/<plugin>/<version>/, Claude Code
+# at ~/.claude/plugins/cache/<marketplace>/<plugin>/<version>/ — and that copy
+# carries this script but not the Python virtualenv the server actually lives
+# in: the virtualenv is gitignored, so it is built per machine and never
+# travels. So the interpreter is looked up rather than hard-coded — an absolute
+# path in .mcp.json would work on exactly one machine, and a relative one would
+# resolve inside the cache.
+#
+# What *does* travel is `vendor/kepler-viewer.js`, the viewer bundle, because a
+# map has to render on a machine that has no node_modules and no network. The
+# server finds it relative to its own installed package, so it does not need
+# this script's help — but a checkout whose viewer sources have moved on will
+# render maps with a stale bundle, which is why the version stamp beside it is
+# checked rather than ignored.
+#
+# The search, in order:
+#
+#   1. $KEPLER_GL_MCP_BIN — an explicit interpreter, always wins.
+#   2. A checkout of this plugin, walking up from this script's directory and
+#      then trying the root recorded in ~/.config/kepler-gl/plugin-root by
+#      scripts/record_plugin_root.sh.
+#   3. `kepler-gl-mcp` on $PATH.
+#
+# Step 2 accepts a directory only if it holds both the virtualenv and
+# server/kepler_mcp, so a namesake `.venv` further up the tree — the cache sits
+# under $HOME, which is a plausible place for one — cannot be mistaken for this
+# checkout.
+#
+# From the cache, step 2 only ever succeeds through the recorded root: the walk
+# up from ~/.claude/plugins/cache/… reaches $HOME and stops, and the checkout it
+# was installed from is a sibling of $HOME, not an ancestor.
+
+set -eu
+
+SERVER="kepler-gl-mcp"
+CONFIG_DIR="${KEPLER_GL_CONFIG_DIR:-$HOME/.config/kepler-gl}"
+
+# A directory is this checkout if it has the venv *and* the package. The second
+# test is what makes the walk below safe rather than hopeful.
+try_root() {
+    [ -n "${1:-}" ] || return 1
+    [ -x "$1/.venv/bin/$SERVER" ] || return 1
+    [ -d "$1/server/kepler_mcp" ] || return 1
+    exec "$1/.venv/bin/$SERVER"
+}
+
+if [ -n "${KEPLER_GL_MCP_BIN:-}" ]; then
+    exec "$KEPLER_GL_MCP_BIN"
+fi
+
+try_root "${KEPLER_GL_PLUGIN_ROOT:-}" || true
+
+# From a source checkout the virtualenv is four levels up. `pwd -P` resolves the
+# symlinks, so a linked-in plugin directory still walks the real tree.
+here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)
+up=$here
+while [ "$up" != "/" ] && [ -n "$up" ]; do
+    try_root "$up" || true
+    up=$(dirname -- "$up")
+done
+
+if [ -r "$CONFIG_DIR/plugin-root" ]; then
+    try_root "$(cat "$CONFIG_DIR/plugin-root")" || true
+fi
+
+if command -v "$SERVER" >/dev/null 2>&1; then
+    exec "$SERVER"
+fi
+
+echo "kepler.gl: no interpreter found for $SERVER." >&2
+echo "  Record a checkout of the plugin with scripts/record_plugin_root.sh, or set" >&2
+echo "  KEPLER_GL_MCP_BIN to the executable itself. From a fresh checkout:" >&2
+echo "      uv venv && uv pip install -e ." >&2
+exit 127

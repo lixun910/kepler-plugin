@@ -1,0 +1,17 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "viewer-test",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": ["viewer/test/serve.py"],
+      "port": 8919
+    },
+    {
+      "name": "map-index",
+      "runtimeExecutable": ".venv/bin/python",
+      "runtimeArgs": ["scripts/preview_index.py", "--port", "8933"],
+      "port": 8933
+    }
+  ]
+}

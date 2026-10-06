@@ -1,0 +1,37 @@
+{
+  "name": "kepler-viewer",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Builds vendor/kepler-viewer.js — the single-file kepler.gl viewer the plugin and the server both render maps with.",
+  "type": "module",
+  "scripts": {
+    "build": "node build.mjs",
+    "build:debug": "node build.mjs && node build-debug.mjs",
+    "serve": "python3 test/serve.py",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@kepler.gl/actions": "3.2.6",
+    "@kepler.gl/components": "3.2.6",
+    "@kepler.gl/constants": "3.2.6",
+    "@kepler.gl/processors": "3.2.6",
+    "@kepler.gl/reducers": "3.2.6",
+    "@kepler.gl/schemas": "3.2.6",
+    "@kepler.gl/utils": "3.2.6",
+    "assert": "^2.1.0",
+    "events": "^3.3.0",
+    "hyparquet": "^1.31.1",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-redux": "^8.1.3",
+    "redux": "^4.2.1",
+    "styled-components": "^6.1.8"
+  },
+  "devDependencies": {
+    "@types/geojson": "^7946.0.14",
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "esbuild": "^0.25.0",
+    "typescript": "^5.9.0"
+  }
+}

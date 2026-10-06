@@ -1,0 +1,29 @@
+{
+  "mcpServers": {
+    "kepler-gl": {
+      "command": "./bin/kepler-mcp",
+      "args": [],
+      "cwd": ".",
+      "env_vars": [
+        "KEPLER_GL_PLUGIN_ROOT",
+        "KEPLER_GL_MCP_BIN",
+        "KEPLER_GL_SERVER_URL",
+        "KEPLER_GL_AUTH0_DOMAIN",
+        "KEPLER_GL_AUTH0_CLIENT_ID",
+        "KEPLER_GL_AUTH0_AUDIENCE",
+        "KEPLER_GL_AUTH0_SCOPE",
+        "KEPLER_GL_REDIRECT_URI",
+        "KEPLER_GL_CONFIG_DIR",
+        "KEPLER_GL_MAP_DIR",
+        "KEPLER_GL_VENDOR_DIR",
+        "KEPLER_GL_PREVIEW_PORT",
+        "KEPLER_GL_DEV_TOKEN",
+        "KEPLER_GL_DEV_MODE",
+        "HOME",
+        "PATH"
+      ],
+      "startup_timeout_sec": 30,
+      "tool_timeout_sec": 1800
+    }
+  }
+}

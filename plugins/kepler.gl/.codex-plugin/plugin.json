@@ -1,0 +1,36 @@
+{
+  "name": "kepler.gl",
+  "version": "0.1.0+codex.7ceadca68483",
+  "description": "Build kepler.gl maps from a CSV, Parquet, GeoJSON or shapefile, render them as local pages you can edit and save, and — when you sign in — upload them to a server that keeps the map config and the data as Parquet.",
+  "author": {
+    "name": "kepler.gl"
+  },
+  "license": "MIT",
+  "keywords": [
+    "kepler.gl",
+    "maps",
+    "geospatial",
+    "geojson",
+    "parquet",
+    "duckdb"
+  ],
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "kepler.gl",
+    "shortDescription": "Build and host kepler.gl maps",
+    "longDescription": "Turn a CSV, Parquet file, GeoJSON file or shapefile into an interactive kepler.gl map, written as a page you can open, edit and save. Layers, colour ramps and tooltips are chosen from the data that was actually loaded, so a map opens with something drawn rather than with an empty basemap. Signing in is optional and only needed to upload a map to the kepler.gl server, where projects group maps and every map's config and data are stored as Parquet.",
+    "developerName": "kepler.gl",
+    "category": "Productivity",
+    "capabilities": [
+      "Read",
+      "Write"
+    ],
+    "defaultPrompt": [
+      "Map the earthquakes in this CSV by magnitude",
+      "Turn this GeoJSON of counties into a choropleth of unemployment",
+      "Upload my local maps to a project on the kepler.gl server"
+    ],
+    "brandColor": "#6A2C70"
+  }
+}

@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>kepler-viewer — saved config</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+      }
+      #kepler-root {
+        height: 100%;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="kepler-root"></div>
+    <script>
+      window.__errs = [];
+      window.addEventListener('error', function (e) {
+        window.__errs.push(String(e.message) + ' @ ' + String(e.filename).split('/').pop() + ':' + e.lineno);
+      });
+      window.addEventListener('unhandledrejection', function (e) {
+        window.__errs.push('rejection: ' + String(e.reason && (e.reason.stack || e.reason.message || e.reason)));
+      });
+      // Every outbound request, in order, with its status. The network panel in
+      // devtools is the same information, but it is not readable from here, and
+      // "which URLs were requested at all" is the question that separates the
+      // three ways a basemap can fail: the style was never requested, the style
+      // was requested but the tiles were not, or neither. Only the first is a
+      // kepler problem, and only the second a style-URL problem.
+      window.__reqs = [];
+      (function () {
+        var open = XMLHttpRequest.prototype.open;
+        XMLHttpRequest.prototype.open = function (method, url) {
+          var entry = {method: method, url: String(url), status: null};
+          window.__reqs.push(entry);
+          this.addEventListener('loadend', function () {
+            entry.status = this.status;
+          });
+          return open.apply(this, arguments);
+        };
+        var fetch_ = window.fetch;
+        window.fetch = function (input, init) {
+          var url = typeof input === 'string' ? input : input && input.url;
+          var entry = {method: (init && init.method) || 'GET', url: String(url), status: null};
+          window.__reqs.push(entry);
+          return fetch_.apply(this, arguments).then(function (res) {
+            entry.status = res.status;
+            return res;
+          });
+        };
+      })();
+    </script>
+    <script src="./spec-city.js"></script>
+    <script src="./kepler-viewer.js"></script>
+  </body>
+</html>

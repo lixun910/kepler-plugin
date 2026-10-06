@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>kepler-viewer debug</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+      }
+      #kepler-root {
+        height: 100%;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="kepler-root"></div>
+    <!-- Capture first, so the error is recorded before the bundle runs. The
+         console is not always enough: a throw inside a React effect lands in
+         the console but not in a place that survives a reload. -->
+    <script>
+      window.__errs = [];
+      window.addEventListener('error', function (e) {
+        window.__errs.push(
+          String(e.message) + ' @ ' + String(e.filename).split('/').pop() + ':' + e.lineno + ':' + e.colno
+        );
+      });
+      window.addEventListener('unhandledrejection', function (e) {
+        window.__errs.push('rejection: ' + String(e.reason && (e.reason.stack || e.reason.message || e.reason)));
+      });
+    </script>
+    <script src="./spec.js"></script>
+    <script src="./kepler-viewer.debug.js"></script>
+  </body>
+</html>

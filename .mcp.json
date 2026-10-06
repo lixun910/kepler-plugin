@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "kepler-gl": {
+      "command": "${CLAUDE_PLUGIN_ROOT}/plugins/kepler.gl/bin/kepler-mcp",
+      "args": [],
+      "env": {}
+    }
+  }
+}

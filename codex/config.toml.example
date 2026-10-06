@@ -1,0 +1,47 @@
+# Codex CLI wiring for the kepler.gl MCP server, without the plugin system.
+#
+# This is the direct path: it registers the server and nothing else. To install
+# the plugin instead — the one that carries the skill, and shows up in Codex's
+# `/plugins` browser — run scripts/install_codex_plugin.sh, which needs no
+# hand-editing.
+#
+# Append this block to ~/.codex/config.toml, replacing <PLUGIN_ROOT> with the
+# absolute path to this checkout — Codex does not expand a plugin-root variable
+# the way Claude Code's `.mcp.json` does. On macOS and Linux:
+#
+#     sed "s|<PLUGIN_ROOT>|$PWD|" codex/config.toml.example >> ~/.codex/config.toml
+#
+# Then `codex mcp list` should show kepler-gl, and the fifteen tools should be
+# available in a session. Codex reads AGENTS.md for the workflow guidance that
+# Claude Code gets from the plugin's skill, so also append codex/AGENTS.md to
+# ~/.codex/AGENTS.md, or to an AGENTS.md in the directory you run Codex from.
+
+[mcp_servers.kepler-gl]
+command = "<PLUGIN_ROOT>/.venv/bin/kepler-gl-mcp"
+args = []
+
+# Credentials are read from the environment, per the MCP authorization spec for
+# stdio servers. Everything below is optional, and the local half of the plugin
+# — creating, listing, opening and editing maps — works with none of it set.
+#
+# [mcp_servers.kepler-gl.env]
+# # Where the hosted half lives. Local development points at the Next.js dev
+# # server; a deployment sets this to its Vercel URL.
+# KEPLER_GL_SERVER_URL = "http://localhost:3000"
+# # Auth0, in an application of type "Native". All three are needed before
+# # `login` can do anything; without them this install is local-only.
+# KEPLER_GL_AUTH0_DOMAIN = "your-tenant.us.auth0.com"
+# KEPLER_GL_AUTH0_CLIENT_ID = "..."
+# KEPLER_GL_AUTH0_AUDIENCE = "https://api.kepler.gl"
+# # Must match the callback registered against the Auth0 application, port and
+# # all: Auth0 compares the redirect URI as a string.
+# KEPLER_GL_REDIRECT_URI = "http://127.0.0.1:8976/callback"
+# # Where map directories are written. Defaults to ~/kepler-maps, deliberately
+# # not a dot-directory: these are artifacts the user opens and keeps.
+# KEPLER_GL_MAP_DIR = "/Users/you/kepler-maps"
+# # Pin the preview server's port. The default, 0, lets the OS choose a free one.
+# KEPLER_GL_PREVIEW_PORT = "0"
+# # Testing only: a pinned token, which additionally requires DEV_MODE=1 so it
+# # can never become the production path by accident.
+# KEPLER_GL_DEV_TOKEN = "..."
+# KEPLER_GL_DEV_MODE = "1"

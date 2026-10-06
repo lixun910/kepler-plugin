@@ -1,0 +1,26 @@
+{
+  "name": "kepler-gl",
+  "owner": {
+    "name": "kepler.gl"
+  },
+  "description": "kepler.gl maps built from your own data, rendered locally and — when you sign in — stored on a server.",
+  "plugins": [
+    {
+      "name": "kepler.gl",
+      "source": "./",
+      "description": "Build kepler.gl maps from a CSV, Parquet, GeoJSON or shapefile, render them as local pages you can edit and save, and — when you sign in — upload them to a server that keeps the map config and the data as Parquet.",
+      "author": {
+        "name": "kepler.gl"
+      },
+      "category": "Productivity",
+      "tags": [
+        "kepler.gl",
+        "maps",
+        "geospatial",
+        "geojson",
+        "parquet",
+        "duckdb"
+      ]
+    }
+  ]
+}

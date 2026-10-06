@@ -1,0 +1,27 @@
+[project]
+name = "kepler-gl-mcp"
+version = "0.1.0"
+description = "MCP server for building kepler.gl maps and rendering them as local HTML pages"
+requires-python = ">=3.11"
+dependencies = [
+    # The data engine. One dependency does CSV with type inference, Parquet,
+    # JSON and newline-delimited JSON, over local files and http(s) URLs alike,
+    # and can answer questions about the schema it produced rather than making
+    # this package guess. The spatial extension — shapefiles, WKT columns — is
+    # downloaded on first use and is optional; see data.py.
+    "duckdb>=1.4",
+    "httpx>=0.27",
+    # 2.x: FastMCP was renamed to MCPServer. tools.py is written against the new
+    # API, so this is a floor rather than a preference.
+    "mcp>=2.0",
+]
+
+[project.scripts]
+kepler-gl-mcp = "kepler_mcp.__main__:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["server/kepler_mcp"]
